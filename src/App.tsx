@@ -11,35 +11,35 @@ import { Auth } from './components/Auth';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>({
+    uid: 'demo-user-123',
+    displayName: 'Demo User',
+    email: 'demo@example.com',
+    photoURL: 'https://picsum.photos/seed/demo/100/100',
+  } as User);
+  const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'records' | 'history' | 'experts'>('chat');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // Sync user profile
-        const userRef = doc(db, 'users', user.uid);
-        try {
-          const userDoc = await getDoc(userRef);
-          if (!userDoc.exists()) {
-            await setDoc(userRef, {
-              uid: user.uid,
-              displayName: user.displayName,
-              email: user.email,
-              createdAt: new Date().toISOString()
-            });
-          }
-        } catch (err) {
-          console.error("Error syncing user profile:", err);
+    // Sync demo user profile
+    const syncDemoUser = async () => {
+      const userRef = doc(db, 'users', 'demo-user-123');
+      try {
+        const userDoc = await getDoc(userRef);
+        if (!userDoc.exists()) {
+          await setDoc(userRef, {
+            uid: 'demo-user-123',
+            displayName: 'Demo User',
+            email: 'demo@example.com',
+            createdAt: new Date().toISOString()
+          });
         }
-        setUser(user);
-      } else {
-        setUser(null);
+      } catch (err) {
+        console.error("Error syncing demo user profile:", err);
       }
-      setLoading(false);
-    });
+    };
+    syncDemoUser();
 
     // Test connection to Firestore
     const testConnection = async () => {
@@ -52,8 +52,6 @@ export default function App() {
       }
     };
     testConnection();
-
-    return () => unsubscribe();
   }, []);
 
   if (loading) {

@@ -67,13 +67,21 @@ export function Navigation({ activeTab, setActiveTab, user }: NavigationProps) {
           </div>
         </div>
 
-        <button
-          onClick={handleLogout}
-          className="w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-[#5A5A40] hover:bg-red-50 hover:text-red-700 transition-all duration-200 font-medium"
-        >
-          <LogOut className="w-5 h-5" />
-          Sign Out
-        </button>
+        {/* Sign Out button hidden in Demo Mode */}
+        {user.uid !== 'demo-user-123' && (
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-[#5A5A40] hover:bg-red-50 hover:text-red-700 transition-all duration-200 font-medium"
+          >
+            <LogOut className="w-5 h-5" />
+            Sign Out
+          </button>
+        )}
+        {user.uid === 'demo-user-123' && (
+          <div className="px-6 py-2 bg-[#5A5A40]/5 rounded-xl text-center">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-[#5A5A40]/40">Demo Mode Active</span>
+          </div>
+        )}
       </div>
     </nav>
   );
