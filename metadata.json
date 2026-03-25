@@ -1,0 +1,5 @@
+{
+  "name": "MedAssist",
+  "description": "AI-powered health symptom checker with secure medical record storage.",
+  "requestFramePermissions": []
+}

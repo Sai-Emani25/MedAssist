@@ -1,0 +1,78 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user basic information and medical history summary.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier for the user." },
+        "displayName": { "type": "string", "description": "User's full name." },
+        "email": { "type": "string", "format": "email", "description": "User's email address." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the profile was created." }
+      },
+      "required": ["uid", "email"]
+    },
+    "SymptomCheck": {
+      "title": "Symptom Check Record",
+      "description": "A record of a symptom check session with AI analysis.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID who performed the check." },
+        "symptoms": { "type": "string", "description": "The symptoms reported by the user." },
+        "analysis": { "type": "string", "description": "The AI analysis and suggestions." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the check was performed." },
+        "isEmergency": { "type": "boolean", "description": "Whether the AI flagged this as an emergency." }
+      },
+      "required": ["uid", "symptoms", "analysis", "timestamp"]
+    },
+    "MedicalRecord": {
+      "title": "Medical Record",
+      "description": "Uploaded blood tests, diagnosis, or other medical documents.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID who owns the record." },
+        "recordType": { "type": "string", "enum": ["blood_test", "diagnosis", "other"], "description": "Type of medical record." },
+        "content": { "type": "string", "description": "The text content or summary of the record." },
+        "originalDiagnosis": { "type": "string", "description": "The original diagnosis from the doctor (if any)." },
+        "medication": { "type": "string", "description": "The medication prescribed by the doctor (if any)." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the record was uploaded." },
+        "fileData": { "type": "string", "description": "Base64 encoded file data (optional)." },
+        "fileName": { "type": "string", "description": "Original file name (optional)." }
+      },
+      "required": ["uid", "recordType", "content", "timestamp"]
+    },
+    "Consultation": {
+      "title": "Doctor Consultation",
+      "description": "A request for a doctor to review a symptom check transcript.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID who requested the consultation." },
+        "doctorId": { "type": "string", "description": "The ID of the doctor selected." },
+        "doctorName": { "type": "string", "description": "The name of the doctor." },
+        "checkId": { "type": "string", "description": "The ID of the symptom check record." },
+        "transcript": { "type": "string", "description": "The full transcript of symptoms and AI analysis." },
+        "status": { "type": "string", "enum": ["pending", "reviewed"], "description": "Status of the consultation." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the request was made." }
+      },
+      "required": ["uid", "doctorId", "checkId", "transcript", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile documents."
+    },
+    "/users/{userId}/symptomChecks/{checkId}": {
+      "schema": "SymptomCheck",
+      "description": "History of symptom checks for a user."
+    },
+    "/users/{userId}/medicalRecords/{recordId}": {
+      "schema": "MedicalRecord",
+      "description": "Medical records uploaded by the user."
+    },
+    "/consultations/{consultationId}": {
+      "schema": "Consultation",
+      "description": "Consultation requests for doctors."
+    }
+  }
+}
