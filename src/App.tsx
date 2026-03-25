@@ -11,35 +11,35 @@ import { Auth } from './components/Auth';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 export default function App() {
-  const [user, setUser] = useState<User | null>({
-    uid: 'demo-user-123',
-    displayName: 'Demo User',
-    email: 'demo@example.com',
-    photoURL: 'https://picsum.photos/seed/demo/100/100',
-  } as User);
-  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'chat' | 'records' | 'history' | 'experts'>('chat');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Sync demo user profile
-    const syncDemoUser = async () => {
-      const userRef = doc(db, 'users', 'demo-user-123');
-      try {
-        const userDoc = await getDoc(userRef);
-        if (!userDoc.exists()) {
-          await setDoc(userRef, {
-            uid: 'demo-user-123',
-            displayName: 'Demo User',
-            email: 'demo@example.com',
-            createdAt: new Date().toISOString()
-          });
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        // Sync user profile
+        const userRef = doc(db, 'users', user.uid);
+        try {
+          const userDoc = await getDoc(userRef);
+          if (!userDoc.exists()) {
+            await setDoc(userRef, {
+              uid: user.uid,
+              displayName: user.displayName,
+              email: user.email,
+              createdAt: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          console.error("Error syncing user profile:", err);
         }
-      } catch (err) {
-        console.error("Error syncing demo user profile:", err);
+        setUser(user);
+      } else {
+        setUser(null);
       }
-    };
-    syncDemoUser();
+      setLoading(false);
+    });
 
     // Test connection to Firestore
     const testConnection = async () => {
@@ -52,12 +52,14 @@ export default function App() {
       }
     };
     testConnection();
+
+    return () => unsubscribe();
   }, []);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f5f5f0] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#5A5A40]" />
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
       </div>
     );
   }
@@ -67,10 +69,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f0] flex flex-col md:flex-row">
+    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       <Navigation activeTab={activeTab} setActiveTab={setActiveTab} user={user} />
       
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto">
+      <main className="flex-1 p-4 md:p-8 overflow-y-auto no-scrollbar">
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-red-700">
             <AlertCircle className="w-5 h-5" />
@@ -84,6 +86,10 @@ export default function App() {
           {activeTab === 'history' && <History user={user} />}
           {activeTab === 'experts' && <Experts user={user} />}
         </div>
+
+        <footer className="mt-8 text-center text-slate-400 text-xs font-sans pb-4">
+          MedAssist AI can make mistakes, Always verify with a professional
+        </footer>
       </main>
     </div>
   );

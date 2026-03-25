@@ -18,6 +18,7 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "The user ID who performed the check." },
+        "title": { "type": "string", "description": "A short, descriptive title for the conversation." },
         "symptoms": { "type": "string", "description": "The symptoms reported by the user." },
         "analysis": { "type": "string", "description": "The AI analysis and suggestions." },
         "timestamp": { "type": "string", "format": "date-time", "description": "When the check was performed." },

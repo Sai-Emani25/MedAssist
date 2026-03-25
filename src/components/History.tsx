@@ -14,6 +14,7 @@ interface HistoryProps {
 
 interface SymptomCheck {
   id: string;
+  title?: string;
   symptoms: string;
   analysis: string;
   timestamp: string;
@@ -124,7 +125,10 @@ export function History({ user }: HistoryProps) {
                     <AlertTriangle className="w-4 h-4 text-red-500" />
                   )}
                 </div>
-                <p className="text-[#1a1a1a] font-serif line-clamp-2 mb-4 pr-8">
+                <p className="text-[#1a1a1a] font-serif font-bold text-lg line-clamp-1 mb-1 pr-8">
+                  {check.title || "Symptom Check"}
+                </p>
+                <p className="text-[#5A5A40]/70 font-serif line-clamp-1 mb-4 pr-8 text-sm italic">
                   {check.symptoms}
                 </p>
                 <div className="flex items-center justify-between">
@@ -155,6 +159,7 @@ export function History({ user }: HistoryProps) {
 
               <div className="space-y-8">
                 <section>
+                  <h3 className="text-2xl font-serif text-[#1a1a1a] mb-2">{selectedCheck.title || "Symptom Check"}</h3>
                   <span className="text-[10px] uppercase tracking-widest text-[#5A5A40]/60 font-bold block mb-4">Reported Symptoms</span>
                   <div className="p-6 bg-[#f5f5f0]/50 rounded-2xl border border-[#5A5A40]/5 text-[#1a1a1a] font-serif text-lg italic">
                     "{selectedCheck.symptoms}"
