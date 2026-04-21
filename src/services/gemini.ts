@@ -36,97 +36,122 @@ CRITICAL GUARDRAILS:
 
 If medical records are provided, integrate them into your reasoning (e.g., "Given your recent blood test showing low iron, this fatigue might be related to..."). If asked about medication changes, always advise consulting their prescribing doctor first.`;
 
+function getGeminiKeys(): string[] {
+  const keys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+    process.env.GEMINI_API_KEY_4
+  ].filter((k): k is string => !!k && k !== "MY_GEMINI_API_KEY" && k !== "MY_GEMINI_API_KEY_2" && k !== "MY_GEMINI_API_KEY_3" && k !== "MY_GEMINI_API_KEY_4");
+  
+  return keys.length > 0 ? keys : [process.env.GEMINI_API_KEY!];
+}
+
 export async function analyzeSymptoms(
   messages: { role: 'user' | 'model', parts: any[] }[],
   medicalHistory?: string
 ) {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-  let model = "gemini-3.1-pro-preview";
+  const keys = getGeminiKeys();
+  let lastError: any = null;
 
-  try {
-    // Add medical history as context if it's the first message
-    const contents = [...messages];
-    if (medicalHistory && contents.length > 0 && contents[0].role === 'user') {
-      contents[0].parts.unshift({ text: `User Medical History/Records for context: ${medicalHistory}\n\n` });
-    }
+  for (const apiKey of keys) {
+    const ai = new GoogleGenAI({ apiKey });
+    let model = "gemini-3.1-pro-preview";
 
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model,
-      contents,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.7,
-        tools: [{ googleSearch: {} }],
-        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
-      },
-    });
-
-    // Check if the response was blocked or empty
-    if (!response.text) {
-      const feedback = response.candidates?.[0]?.finishReason;
-      const blockedReasons = ['SAFETY', 'OTHER', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII'];
-      if (feedback && blockedReasons.includes(feedback)) {
-        throw new GeminiError(GeminiErrorType.PROMPT, "I cannot provide specific medical advice for this request. Please consult a qualified healthcare professional immediately.");
+    try {
+      // Add medical history as context if it's the first message
+      const contents = [...messages];
+      if (medicalHistory && contents.length > 0 && contents[0].role === 'user') {
+        contents[0].parts.unshift({ text: `User Medical History/Records for context: ${medicalHistory}\n\n` });
       }
-      throw new GeminiError(GeminiErrorType.API, "The AI service is temporarily unable to generate a response. Please try a different question.");
-    }
 
-    return response.text;
-  } catch (err: any) {
-    console.error(`Gemini API Error with ${model}:`, err);
-    
-    // Fallback to flash if pro fails with quota or other API issues
-    if (model === "gemini-3.1-pro-preview" && !(err instanceof GeminiError && err.type === GeminiErrorType.PROMPT)) {
-      console.log("Attempting fallback to gemini-3-flash-preview...");
-      try {
-        model = "gemini-3-flash-preview";
-        const contents = [...messages];
-        if (medicalHistory && contents.length > 0 && contents[0].role === 'user') {
-          contents[0].parts.unshift({ text: `User Medical History/Records for context: ${medicalHistory}\n\n` });
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model,
+        contents,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          temperature: 0.7,
+          tools: [{ googleSearch: {} }],
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
+        },
+      });
+
+      // Check if the response was blocked or empty
+      if (!response.text) {
+        const feedback = response.candidates?.[0]?.finishReason;
+        const blockedReasons = ['SAFETY', 'OTHER', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII'];
+        if (feedback && blockedReasons.includes(feedback)) {
+          throw new GeminiError(GeminiErrorType.PROMPT, "I cannot provide specific medical advice for this request. Please consult a qualified healthcare professional immediately.");
         }
-        
-        const response: GenerateContentResponse = await ai.models.generateContent({
-          model,
-          contents,
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            temperature: 0.7,
-            tools: [{ googleSearch: {} }],
-          },
-        });
-
-        if (response.text) return response.text;
-      } catch (fallbackErr) {
-        console.error("Fallback also failed:", fallbackErr);
+        throw new GeminiError(GeminiErrorType.API, "The AI service is temporarily unable to generate a response. Please try a different question.");
       }
+
+      return response.text;
+    } catch (err: any) {
+      console.error(`Gemini API Error with ${model} (Key Index: ${keys.indexOf(apiKey)}):`, err);
+      lastError = err;
+      
+      const message = err.message || String(err);
+      const isApiError = message.includes('API key') || message.includes('403') || message.includes('401') || message.includes('quota') || message.includes('429') || message.includes('limit');
+      
+      // If it's a prompt error (safety), don't retry with other keys
+      if (err instanceof GeminiError && err.type === GeminiErrorType.PROMPT) throw err;
+      if (message.includes('safety') || message.includes('blocked')) throw new GeminiError(GeminiErrorType.PROMPT, "I'm sorry, but I can't process that request due to safety guidelines.", err);
+
+      // If it's not an API error, try fallback to flash with SAME key first
+      if (!isApiError && model === "gemini-3.1-pro-preview") {
+        console.log("Attempting fallback to gemini-3-flash-preview...");
+        try {
+          model = "gemini-3-flash-preview";
+          const contents = [...messages];
+          if (medicalHistory && contents.length > 0 && contents[0].role === 'user') {
+            contents[0].parts.unshift({ text: `User Medical History/Records for context: ${medicalHistory}\n\n` });
+          }
+          
+          const response: GenerateContentResponse = await ai.models.generateContent({
+            model,
+            contents,
+            config: {
+              systemInstruction: SYSTEM_INSTRUCTION,
+              temperature: 0.7,
+              tools: [{ googleSearch: {} }],
+            },
+          });
+
+          if (response.text) return response.text;
+        } catch (fallbackErr) {
+          console.error("Fallback also failed:", fallbackErr);
+        }
+      }
+      
+      // If it IS an API error, continue to next key in the loop
+      if (isApiError) continue;
+      
+      // If we've tried both models and it's not an API error, break and try next key or fallback to Groq
+      break;
     }
-
-    // Final fallback to Groq
-    const groqResponse = await callGroq(messages, SYSTEM_INSTRUCTION);
-    if (groqResponse) return groqResponse;
-
-    if (err instanceof GeminiError) throw err;
-
-    const message = err.message || String(err);
-    
-    if (message.includes('fetch') || message.includes('network') || message.includes('Load failed')) {
-      throw new GeminiError(GeminiErrorType.NETWORK, "Connection lost. Please check your internet and try again.", err);
-    }
-    
-    if (message.includes('safety') || message.includes('blocked') || message.includes('candidate') || message.includes('finishReason')) {
-      throw new GeminiError(GeminiErrorType.PROMPT, "I'm sorry, but I can't process that request due to safety guidelines. Please try rephrasing your symptoms.", err);
-    }
-
-    if (message.includes('API key') || message.includes('403') || message.includes('401')) {
-      throw new GeminiError(GeminiErrorType.API, "AI service configuration error. Please contact support.", err);
-    }
-
-    if (message.includes('quota') || message.includes('429') || message.includes('limit')) {
-      throw new GeminiError(GeminiErrorType.API, "The AI service is currently at capacity. Please wait a minute and try again.", err);
-    }
-
-    throw new GeminiError(GeminiErrorType.UNKNOWN, "An unexpected error occurred. Please try again.", err);
   }
+
+  // Try Groq as a final fallback
+  const groqResponse = await callGroq(messages, SYSTEM_INSTRUCTION);
+  if (groqResponse) return groqResponse;
+
+  if (lastError instanceof GeminiError) throw lastError;
+  const message = lastError?.message || String(lastError);
+  
+  if (message.includes('fetch') || message.includes('network') || message.includes('Load failed')) {
+    throw new GeminiError(GeminiErrorType.NETWORK, "Connection lost. Please check your internet and try again.", lastError);
+  }
+  
+  if (message.includes('API key') || message.includes('403') || message.includes('401')) {
+    throw new GeminiError(GeminiErrorType.API, "AI service configuration error. Please contact support.", lastError);
+  }
+
+  if (message.includes('quota') || message.includes('429') || message.includes('limit')) {
+    throw new GeminiError(GeminiErrorType.API, "The AI service is currently at capacity. Please wait a minute and try again.", lastError);
+  }
+
+  throw new GeminiError(GeminiErrorType.UNKNOWN, "An unexpected error occurred. Please try again.", lastError);
 }
 
 async function callGroq(messages: any[], systemInstruction: string) {
@@ -156,35 +181,45 @@ async function callGroq(messages: any[], systemInstruction: string) {
 }
 
 export async function generateChatTitle(messages: { role: 'user' | 'model', content: string }[]) {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-    const model = "gemini-3-flash-preview";
+  // Try Gemini first
+  const keys = getGeminiKeys();
+  for (const apiKey of keys) {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const model = "gemini-3-flash-preview";
 
-    const conversation = messages.map(m => `${m.role}: ${m.content}`).join('\n');
-    const prompt = `Based on the following medical conversation, generate a very short, descriptive title (3-5 words maximum).
-    
-    CONVERSATION:
-    ${conversation}
-    
-    TITLE:`;
+      const conversation = messages.map(m => `${m.role}: ${m.content}`).join('\n');
+      const prompt = `Based on the following medical conversation, generate a very short, descriptive title (3-5 words maximum).
+      
+      CONVERSATION:
+      ${conversation}
+      
+      TITLE:`;
 
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        temperature: 0.3,
-      },
-    });
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0.3,
+        },
+      });
 
-    return response.text?.replace(/["']/g, '').trim() || "New Symptom Check";
-  } catch (err) {
-    console.error("Error generating title:", err);
-    
-    const groqResponse = await callGroq(messages, "Generate a very short, descriptive title (3-5 words maximum) for this medical conversation.");
-    if (groqResponse) return groqResponse.replace(/["']/g, '').trim();
-
-    return "Symptom Check";
+      return response.text?.replace(/["']/g, '').trim() || "New Symptom Check";
+    } catch (err: any) {
+      console.error(`Error generating title (Key Index: ${keys.indexOf(apiKey)}):`, err);
+      const message = err.message || String(err);
+      if (message.includes('API key') || message.includes('403') || message.includes('401') || message.includes('quota') || message.includes('429') || message.includes('limit')) {
+        continue;
+      }
+      break;
+    }
   }
+
+  // Fallback to Groq
+  const groqResponse = await callGroq(messages, "Generate a very short, descriptive title (3-5 words maximum) for this medical conversation.");
+  if (groqResponse) return groqResponse.replace(/["']/g, '').trim();
+  
+  return "Symptom Check";
 }
 
 const RECORD_ANALYSIS_INSTRUCTION = `You are a medical data analyst. Your task is to analyze medical records (blood tests, diagnoses, reports) and provide a clear, structured summary for the user.
@@ -208,72 +243,84 @@ export async function analyzeMedicalRecord(
   medication?: string,
   file?: { data: string, mimeType: string }
 ) {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-    const model = "gemini-3.1-pro-preview";
+  const prompt = `
+    Record Type: ${recordType}
+    User Summary/Notes: ${content || 'No notes provided'}
+    Original Diagnosis: ${originalDiagnosis || 'Not specified'}
+    Current Medication: ${medication || 'Not specified'}
+    
+    Please analyze this medical record and provide a structured summary.
+  `;
 
-    const prompt = `
-      Record Type: ${recordType}
-      User Summary/Notes: ${content || 'No notes provided'}
-      Original Diagnosis: ${originalDiagnosis || 'Not specified'}
-      Current Medication: ${medication || 'Not specified'}
-      
-      Please analyze this medical record and provide a structured summary.
-    `;
+  // Try Gemini first
+  const keys = getGeminiKeys();
+  let lastError: any = null;
 
-    const parts: any[] = [{ text: prompt }];
-    if (file) {
-      parts.push({
-        inlineData: {
-          data: file.data,
-          mimeType: file.mimeType
-        }
+  for (const apiKey of keys) {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const model = "gemini-3.1-pro-preview";
+
+      const parts: any[] = [{ text: prompt }];
+      if (file) {
+        parts.push({
+          inlineData: {
+            data: file.data,
+            mimeType: file.mimeType
+          }
+        });
+      }
+
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+        config: {
+          systemInstruction: RECORD_ANALYSIS_INSTRUCTION,
+          temperature: 0.4,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
+        },
       });
+
+      if (!response.text) {
+        throw new GeminiError(GeminiErrorType.API, "The AI returned an empty response.");
+      }
+
+      return response.text;
+    } catch (err: any) {
+      console.error(`Gemini Record Analysis Error (Key Index: ${keys.indexOf(apiKey)}):`, err);
+      lastError = err;
+      const message = err.message || String(err);
+      if (message.includes('API key') || message.includes('403') || message.includes('401') || message.includes('quota') || message.includes('429') || message.includes('limit')) {
+        continue;
+      }
+      break;
     }
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts }],
-      config: {
-        systemInstruction: RECORD_ANALYSIS_INSTRUCTION,
-        temperature: 0.4,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
-      },
-    });
-
-    if (!response.text) {
-      throw new GeminiError(GeminiErrorType.API, "The AI returned an empty response.");
-    }
-
-    return response.text;
-  } catch (err: any) {
-    console.error("Gemini Record Analysis Error:", err);
-    
-    const groqResponse = await callGroq([{ role: 'user', parts: [{ text: prompt }] }], RECORD_ANALYSIS_INSTRUCTION);
-    if (groqResponse) return groqResponse;
-
-    if (err instanceof GeminiError) throw err;
-
-    const message = err.message || String(err);
-    
-    if (message.includes('fetch') || message.includes('network') || message.includes('Load failed')) {
-      throw new GeminiError(GeminiErrorType.NETWORK, "Connection lost. Please check your internet and try again.", err);
-    }
-    
-    if (message.includes('safety') || message.includes('blocked') || message.includes('candidate')) {
-      throw new GeminiError(GeminiErrorType.PROMPT, "I'm sorry, but I can't analyze this record due to safety guidelines.", err);
-    }
-
-    if (message.includes('API key') || message.includes('403') || message.includes('401')) {
-      throw new GeminiError(GeminiErrorType.API, "There's an issue with the AI service configuration.", err);
-    }
-
-    if (message.includes('quota') || message.includes('429') || message.includes('limit')) {
-      throw new GeminiError(GeminiErrorType.API, "The AI service is currently busy. Please try again in a moment.", err);
-    }
-
-    throw new GeminiError(GeminiErrorType.UNKNOWN, "An unexpected error occurred while analyzing the medical record.", err);
   }
+
+  // Fallback to Groq
+  const groqResponse = await callGroq([{ role: 'user', parts: [{ text: prompt }] }], RECORD_ANALYSIS_INSTRUCTION);
+  if (groqResponse) return groqResponse;
+  
+  if (lastError instanceof GeminiError) throw lastError;
+  const message = lastError?.message || String(lastError);
+  
+  if (message.includes('fetch') || message.includes('network') || message.includes('Load failed')) {
+    throw new GeminiError(GeminiErrorType.NETWORK, "Connection lost. Please check your internet and try again.", lastError);
+  }
+  
+  if (message.includes('safety') || message.includes('blocked') || message.includes('candidate')) {
+    throw new GeminiError(GeminiErrorType.PROMPT, "I'm sorry, but I can't analyze this record due to safety guidelines.", lastError);
+  }
+
+  if (message.includes('API key') || message.includes('403') || message.includes('401')) {
+    throw new GeminiError(GeminiErrorType.API, "There's an issue with the AI service configuration.", lastError);
+  }
+
+  if (message.includes('quota') || message.includes('429') || message.includes('limit')) {
+    throw new GeminiError(GeminiErrorType.API, "The AI service is currently busy. Please try again in a moment.", lastError);
+  }
+
+  throw new GeminiError(GeminiErrorType.UNKNOWN, "An unexpected error occurred while analyzing the medical record.", lastError);
 }
 
 const RECORD_CHAT_INSTRUCTION = `You are a medical data analyst. You are helping a user understand a specific medical record.
@@ -302,54 +349,66 @@ export async function chatAboutRecord(
   },
   messages: { role: 'user' | 'model', content: string }[]
 ) {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-    const model = "gemini-3.1-pro-preview";
+  const keys = getGeminiKeys();
+  let lastError: any = null;
+  const recordContext = `
+    RECORD CONTEXT:
+    Type: ${record.recordType}
+    Date: ${record.timestamp}
+    Summary: ${record.content || 'N/A'}
+    Diagnosis: ${record.originalDiagnosis || 'N/A'}
+    Medication: ${record.medication || 'N/A'}
+    Initial AI Analysis: ${record.analysis || 'N/A'}
+  `;
 
-    const recordContext = `
-      RECORD CONTEXT:
-      Type: ${record.recordType}
-      Date: ${record.timestamp}
-      Summary: ${record.content || 'N/A'}
-      Diagnosis: ${record.originalDiagnosis || 'N/A'}
-      Medication: ${record.medication || 'N/A'}
-      Initial AI Analysis: ${record.analysis || 'N/A'}
-    `;
+  // Try Gemini first
+  for (const apiKey of keys) {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const model = "gemini-3.1-pro-preview";
 
-    const contents = messages.map(m => ({
-      role: m.role,
-      parts: [{ text: m.content }]
-    }));
+      const contents = messages.map(m => ({
+        role: m.role,
+        parts: [{ text: m.content }]
+      }));
 
-    // Inject context into the first user message
-    if (contents.length > 0 && contents[0].role === 'user') {
-      contents[0].parts.unshift({ text: recordContext + "\n\n" });
+      // Inject context into the first user message
+      if (contents.length > 0 && contents[0].role === 'user') {
+        contents[0].parts.unshift({ text: recordContext + "\n\n" });
+      }
+
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model,
+        contents,
+        config: {
+          systemInstruction: RECORD_CHAT_INSTRUCTION,
+          temperature: 0.7,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
+        },
+      });
+
+      if (!response.text) {
+        throw new GeminiError(GeminiErrorType.API, "The AI returned an empty response.");
+      }
+
+      return response.text;
+    } catch (err: any) {
+      console.error(`Gemini Record Chat Error (Key Index: ${keys.indexOf(apiKey)}):`, err);
+      lastError = err;
+      const message = err.message || String(err);
+      if (message.includes('API key') || message.includes('403') || message.includes('401') || message.includes('quota') || message.includes('429') || message.includes('limit')) {
+        continue;
+      }
+      break;
     }
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model,
-      contents,
-      config: {
-        systemInstruction: RECORD_CHAT_INSTRUCTION,
-        temperature: 0.7,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
-      },
-    });
-
-    if (!response.text) {
-      throw new GeminiError(GeminiErrorType.API, "The AI returned an empty response.");
-    }
-
-    return response.text;
-  } catch (err: any) {
-    console.error("Gemini Record Chat Error:", err);
-
-    const groqResponse = await callGroq(messages.map(m => ({ role: m.role, parts: [{ text: m.content }] })), RECORD_CHAT_INSTRUCTION);
-    if (groqResponse) return groqResponse;
-
-    if (err instanceof GeminiError) throw err;
-    throw new GeminiError(GeminiErrorType.UNKNOWN, "Failed to chat about the record.", err);
   }
+
+  // Fallback to Groq
+  const groqResponse = await callGroq(messages.map(m => ({ role: m.role, parts: [{ text: m.content }] })), RECORD_CHAT_INSTRUCTION);
+  if (groqResponse) return groqResponse;
+  
+  if (lastError instanceof GeminiError) throw lastError;
+  throw new GeminiError(GeminiErrorType.UNKNOWN, "Failed to chat about the record.", lastError);
 }
 
 const SPECIALIST_RECOMMENDATION_INSTRUCTION = `You are a medical triage assistant. Your task is to analyze a user's medical history, including symptom checks and medical records, and recommend the most appropriate medical specialist.
@@ -373,51 +432,64 @@ Your response MUST be a JSON object with the following structure:
 CRITICAL: Do not provide a diagnosis. Only recommend a specialist type based on the symptoms and history provided.`;
 
 export async function recommendSpecialist(history: string, records: string) {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-    const model = "gemini-3.1-pro-preview";
+  const prompt = `
+    USER SYMPTOM HISTORY:
+    ${history || 'No history available'}
 
-    const prompt = `
-      USER SYMPTOM HISTORY:
-      ${history || 'No history available'}
-
-      USER MEDICAL RECORDS:
-      ${records || 'No records available'}
-      
-      Based on this information, which specialist should the user consult?
-    `;
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        systemInstruction: SPECIALIST_RECOMMENDATION_INSTRUCTION,
-        temperature: 0.2,
-        responseMimeType: "application/json",
-      },
-    });
-
-    if (!response.text) {
-      throw new GeminiError(GeminiErrorType.API, "The AI returned an empty response.");
-    }
-
-    return JSON.parse(response.text);
-  } catch (err: any) {
-    console.error("Gemini Specialist Recommendation Error:", err);
+    USER MEDICAL RECORDS:
+    ${records || 'No records available'}
     
-    const groqResponse = await callGroq([{ role: 'user', parts: [{ text: prompt }] }], SPECIALIST_RECOMMENDATION_INSTRUCTION);
-    if (groqResponse) {
-      try {
-        return JSON.parse(groqResponse);
-      } catch (e) {
-        console.error("Failed to parse Groq specialist recommendation:", e);
-      }
-    }
+    Based on this information, which specialist should the user consult?
+  `;
 
-    return {
-      recommendedSpecialty: "General Physician",
-      reasoning: "Unable to perform deep analysis at this time. A general physician is the best starting point.",
-      confidence: 0.5
-    };
+  // Try Gemini first
+  const keys = getGeminiKeys();
+  let lastError: any = null;
+
+  for (const apiKey of keys) {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const model = "gemini-3.1-pro-preview";
+
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          systemInstruction: SPECIALIST_RECOMMENDATION_INSTRUCTION,
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
+      });
+
+      if (!response.text) {
+        throw new GeminiError(GeminiErrorType.API, "The AI returned an empty response.");
+      }
+
+      return JSON.parse(response.text);
+    } catch (err: any) {
+      console.error(`Gemini Specialist Recommendation Error (Key Index: ${keys.indexOf(apiKey)}):`, err);
+      lastError = err;
+      const message = err.message || String(err);
+      if (message.includes('API key') || message.includes('403') || message.includes('401') || message.includes('quota') || message.includes('429') || message.includes('limit')) {
+        continue;
+      }
+      break;
+    }
   }
+
+  // Fallback to Groq
+  const groqResponse = await callGroq([{ role: 'user', parts: [{ text: prompt }] }], SPECIALIST_RECOMMENDATION_INSTRUCTION);
+  if (groqResponse) {
+    try {
+      return JSON.parse(groqResponse);
+    } catch (e) {
+      console.error("Failed to parse Groq specialist recommendation:", e);
+    }
+  }
+  
+  return {
+    recommendedSpecialty: "General Physician",
+    reasoning: "Unable to perform deep analysis at this time. A general physician is the best starting point.",
+    confidence: 0.5
+  };
 }
